@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SDGs 3 健康與福祉 - 體感互動遊戲</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #1a202c;
+            color: white;
+            overflow: hidden;
+            font-family: 'Microsoft JhengHei', sans-serif;
+            touch-action: none; /* Prevent zooming on mobile */
+        }
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        /* The hidden video element for capture */
+        #webcam {
+            display: none;
+        }
+        /* The main canvas where game and video are drawn */
+        #game-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            /* Mirror effect for better UX */
+            transform: scaleX(-1); 
+        }
+        /* UI Overlay needs to be flipped back because the canvas is mirrored */
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none; /* Let clicks pass through if needed */
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            z-index: 10;
+        }
+        /* Flip UI back to normal so text is readable */
+        .ui-content {
+            width: 100%;
+            height: 100%;
+        }
+
+        .modal {
+            background: rgba(0, 0, 0, 0.85);
+            border: 2px solid #4ade80;
+            border-radius: 1rem;
+            padding: 2rem;
+            text-align: center;
+            max-width: 600px;
+            width: 90%;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 20;
+            pointer-events: auto;
+            box-shadow: 0 0 20px rgba(74, 222, 128, 0.5);
+        }
+        
+        .sdg-green { color: #4C9F38; }
+        
+        button {
+            transition: transform 0.1s;
+        }
+        button:active {
+            transform: scale(0.95);
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <video id="webcam" autoplay playsinline></video>
+    <canvas id="game-canvas"></canvas>
+
+    <!-- UI Overlay -->
+    <div id="ui-layer">
+        <div class="ui-content relative">
+            <!-- Top HUD -->
+            <div class="absolute top-0 left-0 p-4 w-full flex justify-between items-start">
+                <div class="bg-black bg-opacity-50 p-2 rounded text-xl">
+                    <span id="score-display" class="text-yellow-400 font-bold">分數: 0</span>
+                </div>
+                <div class="bg-black bg-opacity-50 p-2 rounded text-xl">
+                    <span id="time-display" class="text-white font-bold">時間: 30</span>
+                </div>
+                <div class="bg-black bg-opacity-50 p-2 rounded text-xl">
+                    <span id="level-display" class="text-green-400 font-bold">準備中</span>
+                </div>
+            </div>
+            
+            <!-- Start/Info Modal -->
+            <div id="start-screen" class="modal">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/d/d7/SDG_03.svg/1024px-SDG_03.svg.png" alt="SDGs 3 Icon" class="w-24 h-24 mx-auto mb-4">
+                <h1 class="text-3xl font-bold mb-2 text-green-400">SDGs 3 健康與福祉</h1>
+                <h2 class="text-xl mb-4">體感大冒險</h2>
+                <p class="mb-6 text-gray-300 text-left">
+                    透過這三個關卡，我們將學習如何促進健康生活！<br><br>
+                    📸 <strong>請允許開啟攝影機以進行遊戲。</strong><br>
+                    👋 <strong>玩法：</strong> 站在鏡頭前，揮動雙手觸碰畫面中的物品。<br>
+                    🚫 <strong>注意：</strong> 你的影像只會在瀏覽器處理，不會上傳。
+                </p>
+                <button id="btn-start" class="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-8 rounded-full text-xl shadow-lg">
+                    開始遊戲
+                </button>
+            </div>
+
+            <!-- Level Intro Modal -->
+            <div id="level-intro" class="modal hidden">
+                <h2 id="level-title" class="text-3xl font-bold mb-2 text-green-400">關卡 1</h2>
+                <p id="level-desc" class="mb-6 text-xl text-white">說明文字</p>
+                <div class="flex justify-center space-x-4 mb-4">
+                    <div class="text-center">
+                        <div class="text-4xl mb-1">✅</div>
+                        <p id="target-good" class="text-sm">目標</p>
+                    </div>
+                    <div class="text-center">
+                        <div class="text-4xl mb-1">❌</div>
+                        <p id="target-bad" class="text-sm">避免</p>
+                    </div>
+                </div>
+                <button id="btn-next-level" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-full text-lg">
+                    開始挑戰
+                </button>
+            </div>
+
+            <!-- Game Over Modal -->
+            <div id="game-over" class="modal hidden">
+                <h2 class="text-4xl font-bold mb-4 text-white">遊戲結束</h2>
+                <p class="text-2xl mb-4">最終分數: <span id="final-score" class="text-yellow-400">0</span></p>
+                <p id="feedback-text" class="mb-6 text-gray-300">做得好！</p>
+                <button onclick="location.reload()" class="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-8 rounded-full text-xl">
+                    再玩一次
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+/**
+ * Game Logic & Motion Detection
+ */
+
+// Setup Variables
+const video = document.getElementById('webcam');
+const canvas = document.getElementById('game-canvas');
+const ctx = canvas.getContext('2d');
+const scoreDisplay = document.getElementById('score-display');
+const timeDisplay = document.getElementById('time-display');
+const levelDisplay = document.getElementById('level-display');
+
+// Modals
+const startScreen = document.getElementById('start-screen');
+const levelIntro = document.getElementById('level-intro');
+const gameOverScreen = document.getElementById('game-over');
+
+// Audio Context
+const AudioContext = window.AudioContext || window.webkitAudioContext;
+const audioCtx = new AudioContext();
+
+// Game State
+let gameState = {
+    isActive: false,
+    score: 0,
+    level: 0, // 0: Intro, 1: Nutrition, 2: Disease, 3: Mental
+    timeLeft: 30,
+    lastFrameData: null,
+    entities: [], // Objects on screen
+    spawnTimer: 0,
+    width: 640, // Internal resolution
+    height: 480
+};
+
+// Level Configurations
+const levels = [
+    {
+        id: 1,
+        title: "關卡 1: 營養與運動",
+        desc: "SDGs 3 目標之一是減少非傳染性疾病。透過均衡飲食和運動來保持健康！\n揮手接住蔬菜和運動器材，避開垃圾食物！",
+        duration: 25,
+        good: ["🍎", "🥦", "🥕", "🏋️", "🏀"],
+        bad: ["🍔", "🍟", "🥤"],
+        bg: "#1a202c",
+        spawnRate: 40
+    },
+    {
+        id: 2,
+        title: "關卡 2: 傳染病防治",
+        desc: "我們必須終結傳染病的流行。當病毒出現時，快速揮手將它們消滅！\n保護自己，勤洗手！",
+        duration: 20,
+        good: [], // In this level, "Good" means hitting the target (Virus)
+        bad: [], 
+        special: "virus_fight", // Special logic
+        bg: "#2d3748",
+        spawnRate: 50
+    },
+    {
+        id: 3,
+        title: "關卡 3: 心理健康與醫療",
+        desc: "健康不只是身體，還包括心理健康。獲取醫療資源與保持愉快心情，遠離成癮物質！",
+        duration: 25,
+        good: ["❤️", "💊", "🏥", "🧘"],
+        bad: ["🚬", "🍺", "⛈️"],
+        bg: "#0f172a",
+        spawnRate: 45
+    }
+];
+
+// --- Sound Effects ---
+function playSound(type) {
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const osc = audioCtx.createOscillator();
+    const gainNode = audioCtx.createGain();
+    osc.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+
+    if (type === 'good') {
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(440, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.1);
+        gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.1);
+    } else if (type === 'bad') {
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(50, audioCtx.currentTime + 0.2);
+        gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.2);
+    } else if (type === 'hit') {
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(200, audioCtx.currentTime);
+        gainNode.gain.setValueAtTime(0.05, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.1);
+    }
+}
+
+// --- Initialization ---
+document.getElementById('btn-start').addEventListener('click', async () => {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+            video: { 
+                width: { ideal: 640 },
+                height: { ideal: 480 },
+                facingMode: "user"
+            }, 
+            audio: false 
+        });
+        video.srcObject = stream;
+        video.onloadedmetadata = () => {
+            // Set internal canvas resolution to match video
+            gameState.width = video.videoWidth;
+            gameState.height = video.videoHeight;
+            canvas.width = gameState.width;
+            canvas.height = gameState.height;
+            
+            startScreen.classList.add('hidden');
+            loadLevel(1);
+            gameLoop();
+        };
+    } catch (err) {
+        alert("無法存取攝影機。請確認您已允許權限，並使用支援的瀏覽器(Chrome/Safari)。\n錯誤: " + err.name);
+    }
+});
+
+document.getElementById('btn-next-level').addEventListener('click', () => {
+    levelIntro.classList.add('hidden');
+    startLevel();
+});
+
+// --- Game Control ---
+function loadLevel(levelNum) {
+    gameState.level = levelNum;
+    const config = levels[levelNum - 1];
+    
+    // Update UI
+    document.getElementById('level-title').innerText = config.title;
+    document.getElementById('level-desc').innerText = config.desc;
+    
+    if (config.special === "virus_fight") {
+        document.getElementById('target-good').innerText = "拍打病毒";
+        document.getElementById('target-bad').innerText = "無";
+        document.querySelector('#level-intro .text-4xl').innerText = "🦠";
+    } else {
+        document.getElementById('target-good').innerText = config.good.join(" ");
+        document.getElementById('target-bad').innerText = config.bad.join(" ");
+        document.querySelector('#level-intro .text-4xl').innerText = config.good[0];
+    }
+    
+    levelIntro.classList.remove('hidden');
+}
+
+function startLevel() {
+    const config = levels[gameState.level - 1];
+    gameState.isActive = true;
+    gameState.timeLeft = config.duration;
+    gameState.entities = [];
+    gameState.spawnTimer = 0;
+    
+    // Start Timer
+    const timerInterval = setInterval(() => {
+        if (!gameState.isActive) {
+            clearInterval(timerInterval);
+            return;
+        }
+        gameState.timeLeft--;
+        timeDisplay.innerText = `時間: ${gameState.timeLeft}`;
+        
+        if (gameState.timeLeft <= 0) {
+            clearInterval(timerInterval);
+            finishLevel();
+        }
+    }, 1000);
+
+    levelDisplay.innerText = config.title.split(':')[0]; // Just show "關卡 1"
+}
+
+function finishLevel() {
+    gameState.isActive = false;
+    gameState.entities = [];
+    
+    if (gameState.level < 3) {
+        setTimeout(() => {
+            loadLevel(gameState.level + 1);
+        }, 1500);
+    } else {
+        showGameOver();
+    }
+}
+
+function showGameOver() {
+    gameOverScreen.classList.remove('hidden');
+    document.getElementById('final-score').innerText = gameState.score;
+    let msg = "";
+    if (gameState.score > 500) msg = "太棒了！你是 SDGs 健康大使！";
+    else if (gameState.score > 200) msg = "做得很棒，繼續保持健康習慣！";
+    else msg = "再接再厲，健康生活需要練習！";
+    document.getElementById('feedback-text').innerText = msg;
+}
+
+// --- Motion Detection Logic ---
+function detectMotion() {
+    // Draw current video frame to a temporary canvas/context to get data
+    // In a real optimized app, we might resize to small buffer, but for simplicity we sample directly.
+    
+    // We only need to check motion at specific locations (where entities are)
+    // to save performance.
+    
+    const w = canvas.width;
+    const h = canvas.height;
+    
+    // Create an offscreen canvas for data processing if not exists
+    if (!window.offscreenCv) {
+        window.offscreenCv = document.createElement('canvas');
+        window.offscreenCv.width = 100; // Low res for performance
+        window.offscreenCv.height = 100 * (h/w);
+        window.offscreenCtx = window.offscreenCv.getContext('2d', { willReadFrequently: true });
+    }
+    
+    const lowW = window.offscreenCv.width;
+    const lowH = window.offscreenCv.height;
+    const lowCtx = window.offscreenCtx;
+    
+    // Draw video to low res canvas (mirrored logic handled here if needed, but we just compare raw pixels)
+    lowCtx.drawImage(video, 0, 0, lowW, lowH);
+    
+    const frameData = lowCtx.getImageData(0, 0, lowW, lowH);
+    
+    if (!gameState.lastFrameData) {
+        gameState.lastFrameData = frameData;
+        return []; // No motion on first frame
+    }
+    
+    const data = frameData.data;
+    const lastData = gameState.lastFrameData.data;
+    
+    // We will check motion in specific "zones" mapped from entities
+    let activeZones = [];
+    
+    for(let ent of gameState.entities) {
+        // Map entity coordinates (game space) to low-res video space
+        // Note: Game is mirrored visually. Entity X is 10 (left) -> Video X should be right side if user moves left hand?
+        // Actually: The canvas is CSS transformed scaleX(-1).
+        // So drawing at x=10 looks like x=10. 
+        // The video is drawn normally on canvas context, but CSS flips it.
+        // So logical coordinates align with video coordinates.
+        
+        const rx = Math.floor((ent.x / w) * lowW);
+        const ry = Math.floor((ent.y / h) * lowH);
+        const rw = Math.floor((ent.size / w) * lowW);
+        const rh = Math.floor((ent.size / h) * lowH);
+        
+        let diffScore = 0;
+        let pixelCount = 0;
+        
+        for (let y = ry; y < ry + rh; y++) {
+            for (let x = rx; x < rx + rw; x++) {
+                if (x < 0 || x >= lowW || y < 0 || y >= lowH) continue;
+                
+                const i = (y * lowW + x) * 4;
+                const rDiff = Math.abs(data[i] - lastData[i]);
+                const gDiff = Math.abs(data[i+1] - lastData[i+1]);
+                const bDiff = Math.abs(data[i+2] - lastData[i+2]);
+                
+                if (rDiff + gDiff + bDiff > 100) { // Threshold for pixel change
+                    diffScore++;
+                }
+                pixelCount++;
+            }
+        }
+        
+        // If significant percentage of pixels changed
+        if (pixelCount > 0 && (diffScore / pixelCount) > 0.15) {
+            activeZones.push(ent.id);
+        }
+    }
+    
+    gameState.lastFrameData = frameData;
+    return activeZones;
+}
+
+// --- Game Loop ---
+function gameLoop() {
+    // 1. Draw Background (Video)
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    
+    // Darken video slightly to make emojis pop
+    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    if (gameState.isActive) {
+        const config = levels[gameState.level - 1];
+
+        // 2. Spawn Entities
+        gameState.spawnTimer++;
+        if (gameState.spawnTimer > config.spawnRate) {
+            gameState.spawnTimer = 0;
+            spawnEntity(config);
+        }
+
+        // 3. Detect Motion collisions
+        const hitIds = detectMotion();
+
+        // 4. Update & Draw Entities
+        for (let i = gameState.entities.length - 1; i >= 0; i--) {
+            let ent = gameState.entities[i];
+            
+            // Logic for movement
+            if (config.special === "virus_fight") {
+                // Virus grows or shakes
+                ent.size += 0.2;
+                if (ent.size > 150) { // Too big = damage?
+                    gameState.entities.splice(i, 1); // Just disappear for now
+                    continue;
+                }
+            } else {
+                // Falling objects
+                ent.y += ent.speed;
+            }
+
+            // Draw Entity
+            ctx.font = `${ent.size}px Arial`;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            // Need to flip text back because canvas is flipped via CSS?
+            // No, CSS flips the whole canvas. So drawing normal text appears mirrored.
+            // To make text readable to user, we must draw it mirrored on the canvas so CSS flips it back to normal.
+            ctx.save();
+            ctx.translate(ent.x + ent.size/2, ent.y + ent.size/2);
+            ctx.scale(-1, 1); // Flip text so it looks correct after CSS flip
+            ctx.fillText(ent.emoji, 0, 0);
+            
+            // Health bar for virus
+            if (config.special === "virus_fight") {
+                ctx.fillStyle = "red";
+                ctx.fillRect(-30, 40, 60, 10);
+                ctx.fillStyle = "green";
+                ctx.fillRect(-30, 40, 60 * (ent.hp / 30), 10);
+            }
+            ctx.restore();
+
+            // Check collision (Motion)
+            if (hitIds.includes(ent.id)) {
+                if (config.special === "virus_fight") {
+                    ent.hp -= 2; // Damage virus
+                    ent.size -= 2; // Shrink on hit
+                    playSound('hit');
+                    // Visual flash
+                    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+                    ctx.beginPath();
+                    ctx.arc(ent.x + ent.size/2, ent.y + ent.size/2, ent.size/2, 0, Math.PI*2);
+                    ctx.fill();
+                    
+                    if (ent.hp <= 0) {
+                        gameState.score += 20;
+                        playSound('good');
+                        createParticles(ent.x, ent.y, 'green');
+                        gameState.entities.splice(i, 1);
+                    }
+                } else {
+                    // Standard collection
+                    if (ent.type === 'good') {
+                        gameState.score += 10;
+                        playSound('good');
+                        createParticles(ent.x, ent.y, 'yellow');
+                    } else {
+                        gameState.score -= 10;
+                        playSound('bad');
+                        createParticles(ent.x, ent.y, 'red');
+                    }
+                    gameState.entities.splice(i, 1);
+                    scoreDisplay.innerText = `分數: ${gameState.score}`;
+                }
+            }
+
+            // Out of bounds
+            if (ent.y > canvas.height) {
+                gameState.entities.splice(i, 1);
+            }
+        }
+        
+        // Draw Particles
+        updateAndDrawParticles();
+    }
+
+    requestAnimationFrame(gameLoop);
+}
+
+function spawnEntity(config) {
+    const padding = 50;
+    const x = Math.random() * (canvas.width - padding * 2) + padding;
+    
+    let type = 'good';
+    let emoji = '';
+    
+    if (config.special === "virus_fight") {
+        type = 'bad';
+        emoji = '🦠';
+        const ent = {
+            id: Math.random(),
+            x: x,
+            y: Math.random() * (canvas.height - 200) + 50, // Random height
+            size: 50,
+            emoji: emoji,
+            type: type,
+            hp: 30, // Health for virus
+            speed: 0
+        };
+        // Only spawn if not too many
+        if (gameState.entities.length < 5) gameState.entities.push(ent);
+        return;
+    }
+    
+    // Standard logic
+    if (Math.random() > 0.3 && config.good.length > 0) {
+        type = 'good';
+        emoji = config.good[Math.floor(Math.random() * config.good.length)];
+    } else if (config.bad.length > 0) {
+        type = 'bad';
+        emoji = config.bad[Math.floor(Math.random() * config.bad.length)];
+    } else {
+        return; 
+    }
+    
+    gameState.entities.push({
+        id: Math.random(),
+        x: x,
+        y: -50,
+        size: 60,
+        emoji: emoji,
+        type: type,
+        speed: 3 + Math.random() * 2
+    });
+}
+
+// --- Particles System ---
+let particles = [];
+function createParticles(x, y, color) {
+    for (let i = 0; i < 8; i++) {
+        particles.push({
+            x: x,
+            y: y,
+            vx: (Math.random() - 0.5) * 10,
+            vy: (Math.random() - 0.5) * 10,
+            life: 1.0,
+            color: color
+        });
+    }
+}
+
+function updateAndDrawParticles() {
+    for (let i = particles.length - 1; i >= 0; i--) {
+        let p = particles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.life -= 0.05;
+        
+        ctx.globalAlpha = p.life;
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1.0;
+        
+        if (p.life <= 0) particles.splice(i, 1);
+    }
+}
+
+</script>
+</body>
+</html>
